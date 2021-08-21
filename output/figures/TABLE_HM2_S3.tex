@@ -1,0 +1,15 @@
+\begin{table}
+
+\caption{\label{tab:}Likelihood Ratio Test comparing model with and without (disease) random slopes (reduced model syntax: caseControl $\sim$ 1 + NR + NRSPO + (1 $\mid$ disease type), family = binomial (link = logit)).}
+\centering
+\begin{tabular}[t]{lllllllll}
+\toprule
+Model & N.o. parameters & AIC & BIC & logLik & deviance & Chisq & Df & p-value\\
+\midrule
+\addlinespace[0.3em]
+\multicolumn{9}{l}{\textbf{LRT fixed vs. random slopes (disease type)}}\\
+\hspace{1em}Reduced model (fixed slopes) & 4.00 & 3898.86 & 3922.80 & -1945.43 & 3890.86 & NA & NA & NA\\
+\hspace{1em}Full model (random slopes) & 9.00 & 3841.46 & 3895.31 & -1911.73 & 3823.46 & 67.41 & 5.00 & 3.55e-13\\
+\bottomrule
+\end{tabular}
+\end{table}

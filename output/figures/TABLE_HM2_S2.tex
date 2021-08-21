@@ -1,0 +1,25 @@
+\begin{table}
+
+\caption{\label{tab:}Random binomial regression summary, with disease type fitted as random effects on intercept and slopes (model syntax: caseControl $\sim$ 1 + NR + NRSPO + (1 + NR + NRSPO $\mid$ disease type), family = binomial (link = logit)).}
+\centering
+\begin{tabular}[t]{lllllll}
+\toprule
+\addlinespace[0.3em]
+\multicolumn{7}{l}{\textbf{Fixed effects}}\\
+\hspace{1em} &  & Effect & Estimate & Std. Error & z-value & p-value\\
+\hspace{1em} &  & (Intercept) & -3.33 & 0.81 & -4.10 & 4.20e-05\\
+\hspace{1em} &  & NR & 4.38 & 1.26 & 3.49 & 4.92e-04\\
+\hspace{1em} &  & NRSPO & -1.85 & 2.36 & -0.78 & 0.43\\
+\addlinespace[0.3em]
+\multicolumn{7}{l}{\textbf{Random effects}}\\
+\hspace{1em} & Group & Effect & Variance & Std.Dev &  & \\
+\hspace{1em} & disease type (10) & (Intercept) & 0.000 & 0.000 &  & \\
+\hspace{1em} &  & NR & 4.419 & 2.102 &  & \\
+\hspace{1em} &  & NRSPO & 47.398 & 6.885 &  & \\
+\addlinespace[0.3em]
+\multicolumn{7}{l}{\textbf{Model quality}}\\
+\hspace{1em} &  & AIC & BIC & deviance & df.resid & logLik\\
+ &  & 3841.46 & 3895.31 & 3823.46 & 2925.00 & -1911.73\\
+\bottomrule
+\end{tabular}
+\end{table}
