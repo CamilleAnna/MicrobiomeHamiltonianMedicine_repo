@@ -165,6 +165,28 @@ dat.rescaled<- dat.rescaled %>%
   mutate(cohortNewPlot3 = paste0(cohortNewPlot2, '\n(sick:', case, ', healthy:', control, ')'))
   
 
+dat.rescaled$cohortNewPlot3<- factor(dat.rescaled$cohortNewPlot3,
+                                     levels = rev(c("Liu2017\n(sick:104, healthy:101)",
+                                                "LeChatelierE2013\n(sick:130, healthy:79)",
+                                                "Costea2017\n(sick:60, healthy:26)",
+                                                "iHMP\n(sick:89, healthy:26)",
+                                                "NielsenH2014\n(sick:60, healthy:41)",
+                                                "He2017\n(sick:47, healthy:41)",
+                                                "VogtmannE2016\n(sick:24, healthy:19)",
+                                                "ThomasAM2018\n(sick:84, healthy:45)",
+                                                "ZellerG2014\n(sick:111, healthy:45)",
+                                                "YuJ2015\n(sick:74, healthy:53)",
+                                                "FengQ2015\n(sick:93, healthy:43)",
+                                                "Karlsson2013\n(sick:98, healthy:33)",
+                                                "QinJ2012\n(sick:182, healthy:182)",
+                                                "QinN2014\n(sick:118, healthy:111)",
+                                                "Karlsson2012\n(sick:12, healthy:10)",
+                                                "JieZ2017\n(sick:202, healthy:159)" ,
+                                                "Zhang2015\n(sick:88, healthy:89)",
+                                                "LiJ2017\n(sick:155, healthy:41)",
+                                                "YeZ2018\n(sick:19, healthy:40)")))
+
+
 
 p.NR.boxes<- ggplot(dat.rescaled, aes(x = cohortNewPlot3, y = NR, fill = as.factor(caseControl)))+
   ylab('Gut average relatedness')+xlab('Cohort')+
@@ -434,16 +456,14 @@ dev.off()
 
 # ROC/AUC analysis ----
 library(pROC)
-
-
+library(caret)
+library(metRology)
 
 # Using caret package to run cross-validation analysis
 
-library(caret)
-
 # Example to see how it works
 # Code wrapper to run the cross validation
-rocCV<- function(data, nb.k, reps, focal.disease){
+rocCV<- function(data, nb.k, reps, focal.disease, focal.predictor){
   
   # Defining the cross validation algorithm parameters
   
@@ -471,7 +491,34 @@ rocCV<- function(data, nb.k, reps, focal.disease){
 }
 
 # run it
-rocCV(dat.rescaled, 10, 10, 'MetS')
+out<- rocCV(dat.rescaled, 10, 1000, 'MetS', 'NR')
+
+out$results # ROC = 0.53, ROCSD = 0.2328
+
+
+mean(out$resample[,'ROC']) # this is an emprical sampling distribution of the AUC
+sd(out$resample[,'ROC']) # and this is the standard deviation of the sampling distribution of our mean estimate of the AUC, i.e.the standard error
+# then taking the 0.025 and 97.5 percentiles of this empirical distribution gives as the confidence interval
+
+# So as far as I understand, the k-fold cross validation is a way to obtain a mean estimate of the AUC
+# and the vector of AUC obtained from each fold/repeat sample of the data is essentially an empirical sampling distribution
+# So the standard deviation of that is the standard error of the mean AUC
+# and the percentiles of that is the confidence interval.
+
+# Here the CI would be ~ 1.96*0.2328 = 0.456, so the mean AUC would be [0.074-0.986]
+quantile(out$resample[,'ROC'], c(0.025, 0.975))
+mean(out$resample[,'ROC'])-(1.96*sd(out$resample[,'ROC']))
+mean(out$resample[,'ROC'])+(1.96*sd(out$resample[,'ROC']))
+# Ok so don't find exactly the same, probably because the exact normal approximation here is not the best
+# Like for certain case the t-distribution (= a slightly flattened) normal is better
+#
+qt.scaled(c(0.025, 0.975), 
+          mean = mean(out$resample[,'ROC']), 
+          sd = sd(out$resample[,'ROC']), 
+          df = length(out$resample[,'ROC']))
+# Yep, what I get there is similar to what I get with mean +/- 1.96 SD, but a tad different due to qt.scaled being a t distribution
+# The empirical quantiles are a bit shifted towards lower estimates
+
 
 
 # Quick sensitivity analysis test for k and reps values, see with MetS which is a small dataset
@@ -491,6 +538,7 @@ for(i in 1:nrow(df.run.rocCV)){
   
 }
 
+
 # Not much effect, variance goes larger as k increases, which is expected
 ggplot(df.run.rocCV, aes(x = nb.k, y = ROC, ymin = ROC-ROCSD, ymax = ROC+ROCSD, col = as.factor(reps)))+
   geom_point(position = position_dodge(.8))+
@@ -500,10 +548,13 @@ ggplot(df.run.rocCV, aes(x = nb.k, y = ROC, ymin = ROC-ROCSD, ymax = ROC+ROCSD, 
 
 
 # actual run
-# keep k = 10, reps = 10
+# keep k = 10, reps = 1000
+nb.k = 10
+reps = 1000
 
-df.run.rocCV.fin<- data.frame(nb.k = 10,
-                              reps = 10,
+
+df.run.rocCV.fin<- data.frame(nb.k = nb.k,
+                              reps = reps,
                               focal.disease = unique(dat.rescaled$disease_type), 
                               ROC = NA, 
                               ROCSD = NA)
@@ -514,19 +565,16 @@ d.clean = dat.rescaled %>%
   mutate(caseControl = ifelse(caseControl == 0, 'sick', 'healthy'))
 
 
-nb.k = 10
-reps = 10
-
 fit.control <- trainControl(method = "repeatedcv", number = nb.k, repeats = reps,
                             summaryFunction = twoClassSummary, classProbs = TRUE)
 
 # re-define code wrappers to work with actual run
-rocCV<- function(data, focal.predictor, focal.disease){
+rocCV<- function(data, focal.predictor, focal.disease, trainControl){
   
   data<- rename(data, focal.predictor = focal.predictor)
   
   set.seed(42) # re-setting the seed everytime ensures that the dataset is split the same way when running the ROCcv for the different predictors  
-  fit<- train(caseControl ~ focal.predictor, data = data[data$disease_type %in% focal.disease,], method = "glm", family = "binomial", trControl = fit.control)
+  fit<- train(caseControl ~ focal.predictor, data = data[data$disease_type %in% focal.disease,], method = "glm", family = "binomial", trControl = trainControl)
   
   
   d.out<- data.frame(disease = focal.disease,
@@ -536,14 +584,16 @@ rocCV<- function(data, focal.predictor, focal.disease){
                      mean.train.n = round(mean(lengths(fit$control$index)),0), # mean training set size
                      mean.test.n = round(mean(lengths(fit$control$indexOut)),0)) # mean test set size
   
-  return(d.out)
+  return(list(d.out, fit))
 }
-rocCV.severalDiseases<- function(data, focal.predictor, focal.disease, disease.tag = 'several'){
+
+
+rocCV.severalDiseases<- function(data, focal.predictor, focal.disease, disease.tag = 'several', trainControl){
   
   data<- rename(data, focal.predictor = focal.predictor)
   
   set.seed(42) # re-setting the seed everytime ensures that the dataset is split the same way when running the ROCcv for the different predictors  
-  fit<- train(caseControl ~ focal.predictor, data = data[data$disease_type %in% focal.disease,], method = "glm", family = "binomial", trControl = fit.control)
+  fit<- train(caseControl ~ focal.predictor, data = data[data$disease_type %in% focal.disease,], method = "glm", family = "binomial", trControl = trainControl)
   
   
   d.out<- data.frame(disease = disease.tag,
@@ -553,7 +603,8 @@ rocCV.severalDiseases<- function(data, focal.predictor, focal.disease, disease.t
                      mean.train.n = round(mean(lengths(fit$control$index)),0), # mean training set size
                      mean.test.n = round(mean(lengths(fit$control$indexOut)),0)) # mean test set size
   
-  return(d.out)
+  return(list(d.out, fit))
+  
 }
 
 
@@ -568,64 +619,161 @@ dfin<- data.frame(disease = character(),
                   mean.train.n = numeric(),
                   mean.test.n = numeric())
 
+dfin.list<- vector('list')
 
 # In the loop, redefine the set.seed() everytime ensures the same fold split is done for each test over each predictor
 # can be verified when looking within $result output, can see the seeds of the out/in rows are the same
+
+counter = 0
 for(p in 1:length(preds)){
   
   foc.predictor = preds[p]
   
   for(d in 1:length(dis)){
+   
+    counter = counter + 1
+    print(counter)
     
     foc.disease = dis[d]
     
-    dfin<- rbind(dfin, 
-                 rocCV(d.clean, focal.predictor = foc.predictor, focal.disease = foc.disease))
+    roc.cv<- rocCV(d.clean, focal.predictor = foc.predictor, focal.disease = foc.disease, trainControl = fit.control)
+    
+    dfin<- rbind(dfin, roc.cv[[1]])
+    
+    dfin.list[[counter]]<- roc.cv[[2]]$resample
+    
   }
+  
 }
 
 
-# Finally, ass the cross validation when pooling all diseases
-dfin2<- rbind(dfin,
-              rocCV.severalDiseases(d.clean, focal.predictor = 'NR', focal.disease = dis, disease.tag = 'All diseases'),
-              rocCV.severalDiseases(d.clean, focal.predictor = 'Shannon', focal.disease = dis, disease.tag = 'All diseases'),
-              rocCV.severalDiseases(d.clean, focal.predictor = 'invSimpson', focal.disease = dis, disease.tag = 'All diseases'),
-              rocCV.severalDiseases(d.clean, focal.predictor = 'Richness', focal.disease = dis, disease.tag = 'All diseases'))
+# Finally, add the cross validation when pooling all diseases
+roc.cv.all_NR<- rocCV.severalDiseases(d.clean, focal.predictor = 'NR', focal.disease = dis, disease.tag = 'All diseases', trainControl = fit.control)
+roc.cv.all_Shannon<- rocCV.severalDiseases(d.clean, focal.predictor = 'Shannon', focal.disease = dis, disease.tag = 'All diseases', trainControl = fit.control)
+roc.cv.all_invSimpson<- rocCV.severalDiseases(d.clean, focal.predictor = 'invSimpson', focal.disease = dis, disease.tag = 'All diseases', trainControl = fit.control)
+roc.cv.all_Richness<- rocCV.severalDiseases(d.clean, focal.predictor = 'Richness', focal.disease = dis, disease.tag = 'All diseases', trainControl = fit.control)
 
+
+dfin2<- rbind(dfin,
+              roc.cv.all_NR[[1]],
+              roc.cv.all_Shannon[[1]],
+              roc.cv.all_invSimpson[[1]],
+              roc.cv.all_Richness[[1]])
+
+
+dfin.list2<- dfin.list
+dfin.list2[[41]]<-  roc.cv.all_NR[[2]]$resample
+dfin.list2[[42]]<-  roc.cv.all_Shannon[[2]]$resample
+dfin.list2[[43]]<-  roc.cv.all_invSimpson[[2]]$resample
+dfin.list2[[44]]<-  roc.cv.all_Richness[[2]]$resample
+
+
+hist(dfin.list2[[11]][,'ROC'])
+
+
+rm(dfin.list)
+rm(dat.rescaled) # need only d.clean for the AUC analysis
+rm(prob)
+rm(prob.rescaled)
+rm(roc.cv.all_invSimpson)
+rm(roc.cv.all_NR)
+rm(roc.cv.all_Richness)
+rm(roc.cv.all_Shannon)
+save.image('./output/stats_runs/AUC_crossValidation_runClean.RData')
+load('./output/stats_runs/AUC_crossValidation_runClean.RData')
+
+# looking at an example of resampling distribution
+quantile(dfin.list2[[41]][,'ROC'], c(0.025, 0.975))
+hist(dfin.list2[[41]][,'ROC'])
+
+qt.scaled(c(0.025), mean = roc.cv.all_NR[[1]]$ROC, sd = roc.cv.all_NR[[1]]$ROCSD, df = 999)
+qt.scaled(c(0.975), mean = roc.cv.all_NR[[1]]$ROC, sd = roc.cv.all_NR[[1]]$ROCSD, df = 999)
+
+# Ok, those are super close, and the resampling distribution looks very well normal on this example
+# so think should be fine, use the "empricial 95%CI", that is, the percentile distribution of the resampling distribution
+# this way what this is is transparent
 
 # Plot it
 dfin2$disease<- factor(dfin2$disease, 
                        levels = rev(c('All diseases', 'OBE', 'MetS', 'IBD', 'CRC', 'T2D_IGC', 'LC', 'ACVD', 'RA', 'HYPER', 'BD')))
 
+dfin2$predictor[dfin2$predictor == 'NR']<- 'Mean Relatedness'
+
+
 dfin2$predictor<- factor(dfin2$predictor,
-                         levels = rev(c('NR', 'Shannon', 'invSimpson', 'Richness')))
+                         levels = rev(c('Mean Relatedness', 'Shannon', 'invSimpson', 'Richness')))
 
 dfin3<- dfin2
-
-# Adding k-fold sampled train and test sample sizes to axis labels
-dfin3$diseasePlotNames<- paste0(dfin3$disease, '\n N(train) = ', dfin3$mean.train.n, '\n N(test) = ', dfin3$mean.test.n)
-# Fixing T2D_IGC which should be T2D_IGT
-dfin3$diseasePlotNames[dfin3$diseasePlotNames == 'T2D_IGC\n N(train) = 446\n N(test) = 50']<- 'T2D & IGC\n N(train) = 446\n N(test) = 50'
-
-# Redining the factors order level to be in right order on plot
-diseasePlotNamesOrder<- c("All diseases\n N(train) = 2641\n N(test) = 293",
-                          "OBE\n N(train) = 373\n N(test) = 41",
-                          "MetS\n N(train) = 77\n N(test) = 9",
-                          "IBD\n N(train) = 274\n N(test) = 30",
-                          "CRC\n N(train) = 532\n N(test) = 59",
-                          "T2D & IGC\n N(train) = 446\n N(test) = 50",
-                          "LC\n N(train) = 206\n N(test) = 23",
-                          "ACVD\n N(train) = 345\n N(test) = 38",
-                          "RA\n N(train) = 159\n N(test) = 18" ,
-                          "HYPER\n N(train) = 176\n N(test) = 20",
-                          "BD\n N(train) = 53\n N(test) = 6")
+head(dfin3)
+dfin3$cilower.t<- qt.scaled(c(0.025), mean = dfin3$ROC, sd = dfin3$ROCSD, df = 999)
+dfin3$ciupper.t<- qt.scaled(c(0.975), mean = dfin3$ROC, sd = dfin3$ROCSD, df = 999)
 
 
-dfin3$diseasePlotNames<- factor(dfin3$diseasePlotNames,
-                                levels = rev(diseasePlotNamesOrder))
+getci.emp<- function(x){quantile(x[,'ROC'], c(0.025, 0.975))}
+cis.emp<- as.data.frame(do.call('rbind', lapply(dfin.list2, getci.emp))) %>%
+  rename(cilower.emp = `2.5%`,
+         ciupper.emp = `97.5%`)
+
+dfin3<- cbind(dfin3, cis.emp)
+
+
+# Using percentile intervals of the resampling distribution rather than the qt.scaled quantiles
+# because not 100% sure about the statistical property of the repeated k-fold resampling
+# the percentile interval will be 100% clear and transparent about the method
+# The two correlate so not worried about it anyway
+
+plot(cilower.emp ~ cilower.t, data = dfin3)
+
+
+# Add samples sizes under disease names on y-axis ticks
+nsizes.diseases<- dat.rescaled %>%
+  group_by(disease_type, caseControl) %>%
+  summarise(n = n()) %>%
+  as.data.frame() %>%
+  ungroup() %>%
+  spread(key = caseControl, value = n) %>%
+  as.data.frame() %>%
+  rename(case = `0`,
+         control = `1`) %>%
+  rename(disease = disease_type)
+
+
+nsizes.diseases<- rbind(nsizes.diseases, 
+                        data.frame(disease = 'All diseases',
+                                   case = table(dat.rescaled$caseControl)[[1]],
+                                   control = table(dat.rescaled$caseControl)[[2]]))
+
+
+dfin3<- left_join(dfin3, nsizes.diseases, by = 'disease')
+
+dfin3<- dfin3 %>%
+  mutate(diseasePlot2 = paste0(disease, '\n(sick:', case, ', healthy:', control, ')'))
+
+
+dfin3$diseasePlot2[dfin3$diseasePlot2 == 'T2D_IGC\n(sick:280, healthy:215)']<- "T2D & IGT\n(sick:280, healthy:215)"
+
+
+dfin3$diseasePlot2<- factor(dfin3$diseasePlot2, 
+                            levels = rev(c("All diseases\n(sick:1750, healthy:1184)",
+                                       "OBE\n(sick:234, healthy:180)",
+                                       "MetS\n(sick:60, healthy:26)",
+                                       "IBD\n(sick:196, healthy:108)",
+                                       "CRC\n(sick:386, healthy:205)",
+                                       "T2D & IGT\n(sick:280, healthy:215)",
+                                       "LC\n(sick:118, healthy:111)",
+                                       "ACVD\n(sick:214, healthy:169)",          
+                                       "RA\n(sick:88, healthy:89)",
+                                       "HYPER\n(sick:155, healthy:41)",              
+                                       "BD\n(sick:19, healthy:40)")))
+
+# by definition, a 10-fold will split it in 10, meaning 90% of data goes to training and 10% goes to testing set
+# So by knowing the sample size of the cohorts, the size of train/test sets is known
+
+library(yarrr)
+pal<- c(piratepal('basel', trans = 0.4), piratepal('pony', trans = .5)[9], piratepal('info2', trans = .5)[14])
 
 # Plot
-p.auc<- ggplot(dfin3, aes(x = ROC, y = diseasePlotNames, col = predictor, xmin = ROC-ROCSD, xmax = ROC+ROCSD))+
+p.auc<- ggplot(dfin3, aes(x = ROC, y = diseasePlot2, col = predictor, xmin = cilower.emp, xmax = ciupper.emp))+
   geom_point(position = position_dodge(.8))+
   geom_errorbarh(position = position_dodge(.8), height = 0.2)+
   scale_color_manual(values = rev(c('firebrick', 'dodgerblue', 'purple', 'goldenrod')))+
@@ -644,6 +792,7 @@ p.auc<- ggplot(dfin3, aes(x = ROC, y = diseasePlotNames, col = predictor, xmin =
   geom_errorbarh(position = position_dodge(.8), height = 0.3)+
   ylab('Disease')+
   theme_bw()+
+  geom_vline(xintercept = c(0.5, 0.7), linetype = 'dashed')+
   theme(axis.title = element_text(size = 8),
         axis.text = element_text(size = 6),
         panel.grid = element_line(size = 0.1),
